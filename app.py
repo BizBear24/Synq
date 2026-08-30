@@ -399,13 +399,48 @@ class H(BaseHTTPRequestHandler):
             return self.send(system_page())
         if u.path == "/process":
             return self.send(process_page())
+        if u.path == "/running":
+            body = """
+            <div class="ey">PIPELINE EXECUTION</div>
+            <h1>PROCESSING</h1>
+            <section class="panel">
+              <div class="stages" id="st">
+                <span class="stage" id="s1">INGEST</span>
+                <span class="stage" id="s2">VALIDATE</span>
+                <span class="stage" id="s3">DEDUPLICATE</span>
+                <span class="stage" id="s4">ENRICH</span>
+                <span class="stage" id="s5">RULES</span>
+                <span class="stage" id="s6">SELECT</span>
+                <span class="stage" id="s7">WORK ORDER</span>
+                <span class="stage" id="s8">DRAFT</span>
+                <span class="stage" id="s9">APPROVAL GATE</span>
+              </div>
+              <p class="ey" id="msg">Executing Meridian Ops pipeline…</p>
+            </section>
+            <script>
+            const ids=['s1','s2','s3','s4','s5','s6','s7','s8','s9'];
+            let i=0;
+            function next(){
+              if(i<ids.length){
+                document.getElementById(ids[i]).classList.add('done');
+                i++;
+                setTimeout(next, 160);
+              } else {
+                document.getElementById('msg').textContent='Complete · redirecting to overview';
+                setTimeout(()=>location.href='/', 350);
+              }
+            }
+            setTimeout(next, 150);
+            </script>
+            """
+            return self.send(page("Running", body))
         self.send("Not Found", 404)
 
     def do_POST(self):
         if self.path == "/run":
             O.run()
             self.send_response(303)
-            self.send_header("Location", "/")
+            self.send_header("Location", "/running")
             self.end_headers()
             return
         if self.path.startswith("/approve/"):

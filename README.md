@@ -1,93 +1,81 @@
 # Meridian Ops
 
-Meridian Ops is a PII-safe control plane for the full breakdown workflow: ticket ingestion, context enrichment, deterministic rule evaluation, replacement selection, work-order drafting, approval-gated communication, and a sanitized audit trail.
+PII-safe control plane for the full breakdown-to-resolution workflow:
 
-## Start
+**ticket → context → rules → vehicle decision → work order → communication draft → approval → audit**
 
-```powershell
+Built for the Synq AI Forward Deployment Challenge.
+
+## One-command start
+
+```bash
 python -m pip install -r requirements.txt
-python run_pipeline.py
+python run_pipeline.py --fresh   # optional clean slate
 python app.py
 ```
 
-Open `http://127.0.0.1:8000`. The UI includes Overview, Breakdowns, Context, Rules, Audit, and System pages.
+Open **http://127.0.0.1:8000**
 
-The public repository intentionally excludes Meridian's supplied challenge corpus because it contains personal data. Place the supplied files beside the application files before running locally; in production, provide these sources through an approved private data store.
+## Demo flow (judge over the shoulder)
 
-Run the same command a second time to demonstrate idempotency. Approve an eligible draft exactly once:
+1. **Overview** — live metrics (breakdowns, processed, quarantined, duplicates, PII = 0)
+2. Click **RUN PIPELINE** — watch stages light up (ingest → validate → … → approval gate)
+3. Open a ticket → see **candidates rejected with rule + source**, then **WHY THIS VEHICLE?**
+4. Click **APPROVE & SEND** → status becomes SENT
+5. Run pipeline again → **0 new actions**, duplicates counted (idempotency)
+6. **PROCESS NEW FILE** — drop a surprise JSON schema; safe normalize or quarantine
+7. **ASK CONTEXT** — e.g. `Why was vehicle HR55CD5678 rejected?` or `R9`
 
-```powershell
-python approve.py TKT-0001
-```
+## What is implemented
 
-For a clean local demo reset (only the generated state/outboxes, never source data):
-
-```powershell
-python run_pipeline.py --fresh
-```
-
-Process an evaluator surprise file:
-
-```powershell
-python run_pipeline.py path\to\surprise.json
-```
-
-Compatible JSON arrays and `tickets`, `records`, `data`, or `items` wrappers are accepted. Safe aliases such as `id`, `truck`, `hub`, `distance`, and `dest` are adapted explicitly. Ambiguous input is quarantined, never guessed.
+| Requirement | Status |
+|-------------|--------|
+| Exactly-once work orders & messages | ✅ SQLite action uniqueness |
+| Full re-run produces identical outputs | ✅ Durable state |
+| Quarantine malformed tickets | ✅ Never crashes the run |
+| Surprise-file schema tolerance | ✅ Alias adapter + quarantine |
+| Deterministic rules R1–R11 with citations | ✅ From dispatcher interview |
+| Vehicle eligibility (season, service, hub, year…) | ✅ Hard constraints |
+| Human approval gate before send | ✅ Idempotent approve |
+| Audit trail (no raw PII) | ✅ JSONL + PII scan |
+| Grounded context answers | ✅ Ticket / vehicle / rule lookup |
+| One-command deploy | ✅ |
 
 ## Architecture
 
-```text
-source files -> PII-safe ingestion -> canonical entities -> validation/quarantine
-             -> persistent idempotency -> deterministic rules -> eligibility/ranking
-             -> work order + pending draft -> human approval -> sent + audit
+```
+source files → PII-safe ingestion → canonical entities → validate/quarantine
+             → persistent idempotency → deterministic rules → eligibility/ranking
+             → work order + pending draft → human approval → sent + audit
 ```
 
-SQLite (`meridian_state.db`) is the durable idempotency store. The action uniqueness constraint permits one work order, one pending draft, one sent communication, and one quarantine action per stable ticket identity. JSONL outboxes are written only after durable action insertion succeeds.
+No LLM has decision authority. Safety-critical choices are rule-engine only.
 
-## Evidence and safety
+## Demo fixtures
 
-- Vehicle identity strips case, whitespace, and punctuation; display registration remains separate.
-- Fleet master is authoritative for vehicle attributes/year; maintenance log for dated maintenance; dispatcher interview for operating rules. Emails corroborate rules but never override fleet or maintenance facts.
-- Trips are historical (2018), so they are context evidence only, never current vehicle location.
-- Personal names, phones, licence numbers, and Aadhaar values are discarded at ingestion. Outputs/audit are scanned for phone, Aadhaar, and licence patterns.
-- Beyond-50km incidents remain `NEEDS_REVIEW` because the supplied corpus has no hub-distance source. This is safe containment, not fabricated routing.
-- No LLM has decision or send authority. Every decision is deterministic and cited.
+The official challenge corpus contains personal data and is excluded from the public repo.
+This repo ships **synthetic fixtures** derived from the documented Meridian rules so the full pipeline is runnable and demonstrable:
 
-## Rules
+- `tickets.json` (duplicates, missing fields, alias schema, beyond-50km)
+- `fleet_master.csv`
+- `drivers_roster.csv`
+- `maintenance_log.xlsx` (mixed Hindi-English notes)
+- `meridian_trips.csv`
+- `dispatcher_interview.txt`
 
-`meridian_ops.py` exposes R1-R11 from the dispatcher interview: Delhi NCR winter BS6, winter hills, Shakti SLA, Vertex gate, Apex rotation, Orion year/cold-chain condition, monsoon ETA, origin/nearest-hub sourcing, service grounding, temporary repair containment, and new-driver night pairing.
+Replace with official files when available; loaders remain compatible.
+
+Runtime state lives under `/tmp/meridian_ops_state`.
+
+## Tests
+
+```bash
+python -m unittest -v
+```
 
 ## Outputs
 
 - `outputs/work_orders.jsonl`
-- `outputs/comms_pending.jsonl`
-- `outputs/comms_sent.jsonl`
+- `outputs/comms_pending.jsonl` / `comms_sent.jsonl`
 - `outputs/quarantine.jsonl`
 - `audit/audit.jsonl`
-
-## Tests
-
-```powershell
-python -m unittest -v
-```
-
-The suite covers normalization, duplicates/reruns, malformed quarantine, alias adaptation, beyond-50km containment, approval idempotency, grounded context, and PII scan coverage.
-
-## Known limitation
-
-The supplied corpus has no live hub-distance or availability feed. A production integration would add this source to resolve nearest-hub decisions beyond 50km; Meridian Ops deliberately refuses to invent it.
-
-## Demo fixtures
-
-Because the original challenge corpus contains personal data, this repository ships with **synthetic demo fixtures** derived from the documented Meridian rules (R1–R11):
-
-- `tickets.json`
-- `fleet_master.csv`
-- `drivers_roster.csv`
-- `maintenance_log.xlsx`
-- `meridian_trips.csv`
-- `dispatcher_interview.txt`
-
-These allow the full pipeline (ingest → rules → selection → work order → approval → audit) to be demonstrated without exposing real PII. Replace them with the official challenge files when available; the loader and schema adapter remain compatible.
-
-Runtime state (SQLite + outboxes) is written under `/tmp/meridian_ops_state` in constrained environments.

@@ -165,15 +165,42 @@ class MeridianOps:
  def list_tickets(self):
   return [{"ticket_id":r["ticket_id"],"status":r["status"],"client":json.loads(r["decision_json"])["ticket"]["client"],"destination":json.loads(r["decision_json"])["ticket"]["destination"]} for r in self.db.execute("select * from tickets order by processed_at desc")]
  def context_answer(self,q):
+  q=str(q or "").strip()
+  # Ticket lookup
   m=re.search(r"TKT-[A-Z0-9_-]+",q.upper())
   if m and (r:=self.get_ticket(m.group())):
-   d=r["decision"];return {"answer":f"{r['ticket_id']} is {r['status']}. "+(f"Selected replacement: {d['selection']['vehicle']}." if d["selection"] else f"Needs review: {d['review']}"),"citations":d["citations"],"decision":d}
-  v=self.fleet_map.get(canon(q))
-  if v:
+   d=r["decision"]
+   sel=d.get("selection")
+   ans=f"{r['ticket_id']} is {r['status']}."
+   if sel: ans+=f" Selected replacement: {sel.get('display_vehicle') or sel.get('vehicle')} under rules {', '.join(d.get('rules') or [])}."
+   elif d.get("review"): ans+=f" Needs review: {d['review']}"
+   return {"answer":ans,"citations":d.get("citations") or [],"decision":d,"status":r["status"]}
+  # Vehicle rejection / status (flexible extraction)
+  vreg=None
+  for tok in re.findall(r"[A-Z]{2}\d{2}[A-Z]{0,3}\d{3,4}",q.upper().replace(" ","").replace("-","")):
+   c=canon(tok)
+   if c in self.fleet_map: vreg=c; break
+  if not vreg:
+   for k in self.fleet_map:
+    if k in canon(q) or self.fleet_map[k]["display"].upper().replace(" ","") in q.upper().replace(" ","").replace("-",""):
+     vreg=k; break
+  if vreg:
+   v=self.fleet_map[vreg]
    rej=[]
    for r in self.db.execute("select ticket_id,decision_json from tickets"):
-    for c in json.loads(r["decision_json"])["candidates"]:
-     if c["vehicle"]==v["vehicle"] and c["status"]=="REJECTED":rej.append({"ticket_id":r["ticket_id"],"reasons":c["reasons"],"citations":c["citations"]})
-   ms=self.mstate(v["vehicle"],datetime.now());return {"answer":f"{v['vehicle']}: fleet status {v['status']}; BS stage {v['bs']}; home hub {v['hub']}."+(" Rejection evidence exists." if rej else " No rejection evidence found."),"citations":[v["citation"],ms["citation"]],"maintenance":ms,"rejections":rej}
-  rm=re.search(r"\bR(\d+)\b",q.upper());rule=next((x for x in RULES if rm and x["rule_id"]=="R"+rm.group(1)),None)
-  return {"answer":rule["description"],"citations":[rule["source"]],"rule":rule} if rule else {"answer":"Insufficient data","citations":[]}
+    for c in json.loads(r["decision_json"]).get("candidates") or []:
+     if c.get("vehicle")==v["vehicle"] and c.get("status")=="REJECTED":
+      rej.append({"ticket_id":r["ticket_id"],"reasons":c.get("reasons") or [],"citations":c.get("citations") or []})
+   ms=self.mstate(v["vehicle"],datetime.now())
+   if rej:
+    reasons="; ".join(f"{x['ticket_id']}: {', '.join(x['reasons'])}" for x in rej[:3])
+    ans=f"Vehicle {v['display']} was rejected because: {reasons}."
+   else:
+    ans=f"Vehicle {v['display']}: fleet status {v['status']}; BS {v['bs']}; home hub {v['hub']}. No rejection evidence found in processed tickets."
+   return {"answer":ans,"citations":[v["citation"],ms.get("citation") or "maintenance_log.xlsx"],"maintenance":ms,"rejections":rej}
+  # Rule lookup
+  rm=re.search(r"\bR(\d+)\b",q.upper())
+  rule=next((x for x in RULES if rm and x["rule_id"]=="R"+rm.group(1)),None)
+  if rule:
+   return {"answer":rule["description"],"citations":[rule["source"]],"rule":rule}
+  return {"answer":"Insufficient data","citations":[]}

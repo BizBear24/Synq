@@ -60,12 +60,6 @@
     "driver_id": "DRV-002"
   },
   {
-    "ticket_id": "TKT-BAD-001",
-    "created_at": "2026-01-01T00:00:00",
-    "client": "Unknown",
-    "issue": "Missing vehicle"
-  },
-  {
     "id": "TKT-2026-006",
     "timestamp": "2026-01-25T16:00:00",
     "truck": "HR26MN6789",
@@ -75,5 +69,23 @@
     "distance": 22,
     "issue": "Tyre burst",
     "severity": "MEDIUM"
+  },
+  {
+    "ticket_id": "TKT-BAD-001",
+    "created_at": "2026-01-01T00:00:00",
+    "client": "Unknown",
+    "issue": "Missing vehicle identifier"
+  },
+  {
+    "ticket_id": "TKT-2026-007",
+    "created_at": "2026-02-05T10:00:00",
+    "vehicle": "UP16EF9012",
+    "client": "Apex Chemicals",
+    "origin_hub": "Rudrapur",
+    "destination": "Lucknow",
+    "km_from_origin_hub": 180,
+    "issue": "Clutch failure mid-route",
+    "severity": "HIGH",
+    "driver_id": "DRV-003"
   }
 ]
