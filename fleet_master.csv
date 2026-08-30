@@ -1,0 +1,11 @@
+﻿registration_number,year,bs_stage,engine_heater,home_hub,status
+HR55AB1234,2021,BS6,Yes,Delhi,Active
+HR55CD5678,2019,BS4,No,Delhi,Active
+UP16EF9012,2022,BS6,Yes,Rudrapur,Active
+UP16GH3456,2018,BS4,No,Rudrapur,Active
+PB10IJ7890,2020,BS6,Yes,Ludhiana,Active
+PB10KL2345,2017,BS4,No,Ludhiana,Active
+HR26MN6789,2023,BS6,Yes,Gurgaon,Active
+DL01OP0123,2021,BS6,Yes,Delhi,Active
+HR55QR4567,2019,BS6,No,Delhi,Maintenance
+UP16ST8901,2020,BS6,Yes,Rudrapur,Active

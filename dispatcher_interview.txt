@@ -1,0 +1,13 @@
+Meridian Operations Rules (excerpt for demo fixtures)
+
+R1: Delhi NCR winter (Oct-Feb) routes to Delhi/Gurgaon/Faridabad/Noida require BS6 vehicles.
+R2: Winter hill routes (Nov-Feb) to Rudrapur/Nainital require engine heater and no recent brake work.
+R3: Shakti Cement SLA is 36-hour operating window.
+R4: Vertex Retail Ludhiana gate after 18:00 holds for next 08:00; never mark failed.
+R5: After Apex Chemicals incident, that vehicle cannot take the next Apex dispatch.
+R6: Orion Pharma requires model year 2020+ and prefers newest eligible; no unrefrigerated overnight.
+R7: Monsoon (Jul-Sep) east of Lucknow: +20% ETA padding, no standard SLA.
+R8: Breakdown replacement: within 50km of origin hub use origin hub vehicles; beyond needs review.
+R9: Service eligibility - vehicles with overdue service or temporary repairs are grounded.
+R10: Temporary repair (jugaad) containment - restricted until permanent fix.
+R11: New drivers (<90 days) cannot be paired for night (22:00-06:00) dispatches alone.

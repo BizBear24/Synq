@@ -1,0 +1,79 @@
+[
+  {
+    "ticket_id": "TKT-2026-001",
+    "created_at": "2026-01-15T14:30:00",
+    "vehicle": "HR55CD5678",
+    "client": "Shakti Cement",
+    "origin_hub": "Delhi",
+    "destination": "Gurgaon",
+    "km_from_origin_hub": 25,
+    "issue": "Brake failure reported by driver",
+    "severity": "HIGH",
+    "driver_id": "DRV-001"
+  },
+  {
+    "ticket_id": "TKT-2026-002",
+    "created_at": "2026-02-10T09:15:00",
+    "vehicle": "UP16GH3456",
+    "client": "Apex Chemicals",
+    "origin_hub": "Rudrapur",
+    "destination": "Nainital",
+    "km_from_origin_hub": 40,
+    "issue": "Engine overheating on hill route",
+    "severity": "HIGH",
+    "driver_id": "DRV-003"
+  },
+  {
+    "ticket_id": "TKT-2026-003",
+    "created_at": "2026-01-20T19:45:00",
+    "vehicle": "PB10KL2345",
+    "client": "Vertex Retail",
+    "origin_hub": "Ludhiana",
+    "destination": "Ludhiana",
+    "km_from_origin_hub": 5,
+    "issue": "Electrical short",
+    "severity": "MEDIUM",
+    "driver_id": "DRV-004"
+  },
+  {
+    "ticket_id": "TKT-2026-004",
+    "created_at": "2026-03-05T11:00:00",
+    "vehicle": "HR55AB1234",
+    "client": "Orion Pharma",
+    "origin_hub": "Delhi",
+    "destination": "Noida",
+    "km_from_origin_hub": 18,
+    "issue": "Refrigeration unit intermittent",
+    "severity": "HIGH",
+    "driver_id": "DRV-001"
+  },
+  {
+    "ticket_id": "TKT-2026-005",
+    "created_at": "2026-02-28T22:30:00",
+    "vehicle": "DL01OP0123",
+    "client": "Shakti Cement",
+    "origin_hub": "Delhi",
+    "destination": "Faridabad",
+    "km_from_origin_hub": 30,
+    "issue": "Transmission issue",
+    "severity": "HIGH",
+    "driver_id": "DRV-002"
+  },
+  {
+    "ticket_id": "TKT-BAD-001",
+    "created_at": "2026-01-01T00:00:00",
+    "client": "Unknown",
+    "issue": "Missing vehicle"
+  },
+  {
+    "id": "TKT-2026-006",
+    "timestamp": "2026-01-25T16:00:00",
+    "truck": "HR26MN6789",
+    "client": "Shakti Cement",
+    "hub": "Gurgaon",
+    "dest": "Delhi",
+    "distance": 22,
+    "issue": "Tyre burst",
+    "severity": "MEDIUM"
+  }
+]

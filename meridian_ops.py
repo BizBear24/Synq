@@ -43,8 +43,11 @@ def write(path,rec):
 
 class MeridianOps:
  def __init__(self,root=ROOT):
-  self.root=Path(root);self.out=self.root/"outputs";self.audit_dir=self.root/"audit";self.out.mkdir(exist_ok=True);self.audit_dir.mkdir(exist_ok=True)
-  self.db=sqlite3.connect(self.root/"meridian_state.db",check_same_thread=False);self.db.row_factory=sqlite3.Row
+  self.root=Path(root)
+  # Use /tmp for durable state to avoid sandbox FS quirks on artifacts
+  state = Path("/tmp/meridian_ops_state"); state.mkdir(exist_ok=True)
+  self.out=state/"outputs";self.audit_dir=state/"audit";self.out.mkdir(exist_ok=True);self.audit_dir.mkdir(exist_ok=True)
+  self.db=sqlite3.connect(str(state/"meridian_state.db"),check_same_thread=False);self.db.row_factory=sqlite3.Row
   self.db.executescript("""CREATE TABLE IF NOT EXISTS tickets(ticket_id TEXT PRIMARY KEY,status TEXT,decision_json TEXT,processed_at TEXT);CREATE TABLE IF NOT EXISTS actions(action_id TEXT PRIMARY KEY,ticket_id TEXT,action_type TEXT,payload_json TEXT,created_at TEXT,UNIQUE(ticket_id,action_type));CREATE TABLE IF NOT EXISTS runs(run_id INTEGER PRIMARY KEY AUTOINCREMENT,input_name TEXT,input_count INTEGER,new_actions INTEGER,quarantined INTEGER,duplicates INTEGER,adapted INTEGER DEFAULT 0,created_at TEXT);""")
   if "adapted" not in {x[1] for x in self.db.execute("pragma table_info(runs)")}:self.db.execute("alter table runs add column adapted integer default 0")
   self.db.commit();self.load_context()

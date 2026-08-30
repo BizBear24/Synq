@@ -6,16 +6,14 @@ outputs/
 audit/
 server-*.log
 overview.html
+app.py.bak
 
-# Supplied client context contains personal data; provision it locally or via a private secure store.
-tickets.json
-fleet_master.csv
-drivers_roster.csv
-maintenance_log.xlsx
-meridian_trips.csv
-dispatcher_interview.txt
+# Official challenge corpus (contains personal data) — do not commit real files
 emails/
 Synq_AI_Forward_Deployment_Challenge.pdf
 Synq_AI_FDE_Challenge_Deck.pptx
 CANDIDATE_README.md
 inspect_sources.py
+
+# Demo fixtures (tickets.json, fleet_master.csv, etc.) are intentionally included
+# so the control plane can be run without the private corpus.

@@ -76,3 +76,18 @@ The suite covers normalization, duplicates/reruns, malformed quarantine, alias a
 ## Known limitation
 
 The supplied corpus has no live hub-distance or availability feed. A production integration would add this source to resolve nearest-hub decisions beyond 50km; Meridian Ops deliberately refuses to invent it.
+
+## Demo fixtures
+
+Because the original challenge corpus contains personal data, this repository ships with **synthetic demo fixtures** derived from the documented Meridian rules (R1–R11):
+
+- `tickets.json`
+- `fleet_master.csv`
+- `drivers_roster.csv`
+- `maintenance_log.xlsx`
+- `meridian_trips.csv`
+- `dispatcher_interview.txt`
+
+These allow the full pipeline (ingest → rules → selection → work order → approval → audit) to be demonstrated without exposing real PII. Replace them with the official challenge files when available; the loader and schema adapter remain compatible.
+
+Runtime state (SQLite + outboxes) is written under `/tmp/meridian_ops_state` in constrained environments.
