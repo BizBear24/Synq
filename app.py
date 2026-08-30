@@ -1,6 +1,8 @@
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, unquote
-import html, json, cgi, os, tempfile
+import html, json, os, tempfile
+from email.parser import BytesParser
+from email.policy import default
 from pathlib import Path
 from meridian_ops import MeridianOps, RULES
 
@@ -15,7 +17,7 @@ nav a{color:#141512;text-decoration:none;font-weight:700;margin-left:18px;font-s
 nav a:hover{text-decoration:underline}
 main{max-width:1280px;margin:0 auto;padding:28px 24px 60px}
 .ey{font-size:10px;letter-spacing:1.6px;color:#666;text-transform:uppercase}
-.metrics{display:grid;grid-template-columns:repeat(6,1fr);border:2px solid #141512}
+.metrics{display:grid;grid-template-columns:repeat(8,1fr);border:2px solid #141512}
 .metric{min-height:110px;padding:14px 12px;border-right:1px solid #141512}
 .metric:last-child{border-right:0}
 .metric b{display:block;font-size:32px;margin-top:18px;letter-spacing:-1px}
@@ -45,7 +47,7 @@ pre{white-space:pre-wrap;font:12px Consolas,monospace;background:#fff;padding:12
 .status-pill{display:inline-block;padding:2px 8px;border:1px solid;font-size:11px;font-weight:700}
 .row-actions{margin-top:12px}
 .row-actions form,.row-actions a{display:inline-block;margin-right:8px}
-@media(max-width:900px){.metrics{grid-template-columns:repeat(3,1fr)}.grid{grid-template-columns:1fr}nav{display:none}}
+@media(max-width:900px){header{height:auto;min-height:64px;padding:12px 16px;align-items:flex-start}nav{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}nav a{margin-left:0}.metrics{grid-template-columns:repeat(3,1fr)}.grid{grid-template-columns:1fr}}
 """
 
 def e(x):
@@ -60,7 +62,7 @@ def page(title, body):
   <span class="brand">MERIDIAN OPS</span>
   <nav>
     <a href="/">OVERVIEW</a>
-    <a href="/breakdowns">BREAKDOWNS</a>
+    <a href="/tickets">TICKETS</a>
     <a href="/context">CONTEXT</a>
     <a href="/rules">RULES</a>
     <a href="/audit">AUDIT</a>
@@ -75,12 +77,14 @@ def overview():
     cards = "".join(
         f'<div class="metric"><span class="ey">{e(k)}</span><b>{e(v)}</b></div>'
         for k, v in [
-            ("BREAKDOWNS", d["breakdowns"]),
+            ("INPUT", d["input"]),
+            ("VALID", d["valid"]),
             ("PROCESSED", d["processed"]),
-            ("NEEDS REVIEW", d["needs_review"]),
             ("QUARANTINED", d["quarantined"]),
             ("DUPLICATES", d["duplicates"]),
-            ("PII EXPOSURES", d["pii_exposures"]),
+            ("WORK ORDERS", d["work_orders"]),
+            ("PENDING APPROVAL", d["pending_approval"]),
+            ("SENT", d["sent"]),
         ]
     )
     acts = "".join(
@@ -113,6 +117,7 @@ def overview():
             <p class="ey">Last run · {e(run.get("input_name","—"))} · input {e(run.get("input_count",0))} · new actions {e(run.get("new_actions",0))} · quarantined {e(run.get("quarantined",0))} · duplicates {e(run.get("duplicates",0))}</p>
             <div class="row-actions">
               <form method="POST" action="/run"><button type="submit">RUN PIPELINE</button></form>
+              <a class="btn" href="/tickets">OPEN TICKET QUEUE</a>
               <a class="btn secondary" href="/process">PROCESS NEW FILE</a>
             </div>
           </section>
@@ -125,26 +130,26 @@ def overview():
         """,
     )
 
-def breakdowns():
+def tickets_page():
     rows = "".join(
-        f'<tr><td><a href="/ticket?id={e(t["ticket_id"])}">{e(t["ticket_id"])}</a></td><td>{e(t["client"])}</td><td>{e(t["destination"])}</td><td><span class="{"ok" if t["status"] in ("AWAITING_APPROVAL","SENT") else "review"}">{e(t["status"])}</span></td></tr>'
+        f'<tr><td><b>{e(t["ticket_id"])}</b></td><td>{e(t["client"])}</td><td>{e(t["destination"])}</td><td>{e(t["severity_score"])}/10</td><td><span class="{"ok" if t["status"] in ("AWAITING_APPROVAL","SENT") else "review"}">{e(t["status"])}</span></td><td><a class="btn secondary" href="/ticket?id={e(t["ticket_id"])}">VIEW</a></td></tr>'
         for t in O.list_tickets()
     )
     return page(
-        "Breakdowns",
+        "Tickets",
         f"""
-        <div class="ey">INCIDENT QUEUE</div>
-        <h1>BREAKDOWNS</h1>
+        <div class="ey">LIVE OPERATIONS QUEUE</div>
+        <h1>ALL TICKETS</h1>
         <section class="panel">
           <table>
-            <tr><th>TICKET</th><th>CLIENT</th><th>DESTINATION</th><th>STATUS</th></tr>
-            {rows or "<tr><td colspan=4 class=ey>No tickets processed</td></tr>"}
+            <tr><th>TICKET</th><th>CLIENT</th><th>LOCATION / DESTINATION</th><th>SEVERITY</th><th>STATUS</th><th>ACTION</th></tr>
+            {rows or "<tr><td colspan=6 class=ey>No tickets processed</td></tr>"}
           </table>
         </section>
         """,
     )
 
-def ticket_view(tid):
+def ticket_view(tid, show_ai=False):
     t = O.get_ticket(tid)
     if not t:
         return page("Ticket", "<h1>Not found</h1>")
@@ -153,6 +158,7 @@ def ticket_view(tid):
     sel = d.get("selection")
     cands = d.get("candidates") or []
     rules = d.get("rules") or []
+    action_data = O.ticket_actions(tid)
 
     inc = f"""
     <section class="panel">
@@ -164,7 +170,7 @@ def ticket_view(tid):
         <tr><td class="ey">ORIGIN HUB</td><td>{e(ticket.get("origin_hub"))}</td></tr>
         <tr><td class="ey">DESTINATION</td><td>{e(ticket.get("destination"))}</td></tr>
         <tr><td class="ey">ISSUE</td><td>{e(ticket.get("issue"))}</td></tr>
-        <tr><td class="ey">SEVERITY</td><td>{e(ticket.get("severity"))}</td></tr>
+        <tr><td class="ey">SEVERITY</td><td>{e(ticket.get("severity"))} · <b>{e(ticket.get("severity_score", {"CRITICAL":10,"HIGH":8,"MEDIUM":5,"LOW":2}.get(str(ticket.get("severity","")).upper(),4)))}/10</b></td></tr>
         <tr><td class="ey">CREATED</td><td>{e(ticket.get("created_at"))}</td></tr>
         <tr><td class="ey">STATUS</td><td><span class="{"ok" if t["status"] in ("AWAITING_APPROVAL","SENT") else "review"}">{e(t["status"])}</span></td></tr>
       </table>
@@ -228,11 +234,13 @@ def ticket_view(tid):
           <p class="ey">Repeated approval is idempotent — no duplicate send.</p>
         </section>
         """
+    ai = O.groq_recommendation(tid) if show_ai else None
+    ai_panel = f'''<section class="panel"><h2>GROQ DISPATCH BRIEF</h2><p>{e(ai["answer"])}</p><p class="ey">Provider · {e(ai["provider"])} · Recommendation is advisory; deterministic rules and human approval control dispatch.</p></section>''' if ai else f'''<section class="panel"><h2>AI DISPATCH BRIEF</h2><p class="ey">Uses ticket, truck roster, driver, trips, maintenance and location evidence. It cannot override dispatch rules.</p><a class="btn secondary" href="/ticket?id={e(tid)}&ai=1">GENERATE BRIEF</a></section>'''
 
     return page(
         t["ticket_id"],
         f"""
-        <div class="ey"><a href="/breakdowns">← BREAKDOWNS</a></div>
+        <div class="ey"><a href="/tickets">← ALL TICKETS</a></div>
         <h1>{e(t["ticket_id"])}</h1>
         <div class="grid">
           <div>
@@ -252,8 +260,15 @@ def ticket_view(tid):
               <p>{e(", ".join(rules) or "—")}</p>
               <p class="ey" style="margin-top:12px">CITATIONS</p>
               <p style="font-size:12px">{e(", ".join(d.get("citations") or []))}</p>
+              <p class="ey" style="margin-top:12px">ENRICHED EVIDENCE</p>
+              <pre>{e(json.dumps(d.get("context") or {}, indent=2, default=str))}</pre>
             </section>
             {actions}
+            {ai_panel}
+            <section class="panel">
+              <h2>WORK ORDER</h2><pre>{e(json.dumps(action_data.get("work_order") or {"status":"Not created"}, indent=2))}</pre>
+              <h2 style="margin-top:16px">COMMUNICATION DRAFT</h2><pre>{e(json.dumps(action_data.get("comm_draft") or {"status":"No draft"}, indent=2))}</pre>
+            </section>
           </div>
         </div>
         """,
@@ -357,10 +372,10 @@ def process_page(msg=""):
         <div class="ey">SURPRISE-FILE INGESTION</div>
         <h1>PROCESS NEW FILE</h1>
         <section class="panel">
-          <p>Upload a JSON ticket file. Compatible schemas (including common aliases) are normalized. Incompatible schemas are safely quarantined.</p>
+          <p>Upload a JSON or CSV ticket file. Compatible schemas (including common aliases) are normalized. Incompatible schemas are safely quarantined.</p>
           {f'<p class="ok">{e(msg)}</p>' if msg else ''}
           <form method="POST" action="/upload" enctype="multipart/form-data">
-            <input type="file" name="file" accept=".json,application/json" required>
+            <input type="file" name="file" accept=".json,.csv,application/json,text/csv" required>
             <div style="margin-top:12px"><button type="submit">PROCESS FILE</button></div>
           </form>
         </section>
@@ -384,11 +399,11 @@ class H(BaseHTTPRequestHandler):
         q = parse_qs(u.query)
         if u.path in ("/", "/overview"):
             return self.send(overview())
-        if u.path == "/breakdowns":
-            return self.send(breakdowns())
+        if u.path in ("/breakdowns", "/tickets"):
+            return self.send(tickets_page())
         if u.path == "/ticket":
             tid = q.get("id", [""])[0]
-            return self.send(ticket_view(tid))
+            return self.send(ticket_view(tid, q.get("ai", [""])[0] == "1"))
         if u.path == "/context":
             return self.send(context_page(q.get("q", [""])[0]))
         if u.path == "/rules":
@@ -416,16 +431,23 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
             return
         if self.path == "/upload":
-            ctype, pdict = cgi.parse_header(self.headers.get("Content-Type", ""))
-            if ctype != "multipart/form-data":
+            content_type = self.headers.get("Content-Type", "")
+            if not content_type.startswith("multipart/form-data"):
                 return self.send(process_page("Invalid content type"), 400)
-            pdict["boundary"] = bytes(pdict["boundary"], "utf-8")
-            form = cgi.parse_multipart(self.rfile, pdict)
-            files = form.get("file")
+            length = int(self.headers.get("Content-Length", "0"))
+            payload = self.rfile.read(length)
+            message = BytesParser(policy=default).parsebytes(
+                f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode("utf-8") + payload
+            )
+            files = [part.get_payload(decode=True) for part in message.iter_attachments()
+                     if part.get_param("name", header="content-disposition") == "file"]
             if not files:
                 return self.send(process_page("No file received"), 400)
             raw = files[0]
-            with tempfile.NamedTemporaryFile(suffix=".json", delete=False, dir="/tmp") as tf:
+            upload_part = next(part for part in message.iter_attachments() if part.get_param("name", header="content-disposition") == "file")
+            filename = upload_part.get_filename() or "upload.json"
+            suffix = Path(filename).suffix.lower() if Path(filename).suffix.lower() in (".json", ".csv") else ".json"
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False, dir=tempfile.gettempdir()) as tf:
                 tf.write(raw if isinstance(raw, bytes) else raw.encode("utf-8"))
                 tmp_path = tf.name
             try:

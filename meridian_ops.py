@@ -1,6 +1,7 @@
 """PII-safe deterministic Meridian Ops pipeline."""
 from __future__ import annotations
-import csv, hashlib, json, re, sqlite3
+import csv, hashlib, json, os, re, sqlite3
+from urllib import request
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -37,6 +38,10 @@ def date(x):
    except ValueError:pass
  return None
 def clean(x): return DL.sub("[MASKED-DL]",AAD.sub("[MASKED-ID]",PHONE.sub("[MASKED-PHONE]",str(x or ""))))
+def severity_score(ticket):
+ level=str(ticket.get("severity","")).upper(); issue=str(ticket.get("issue","")).lower()
+ base={"CRITICAL":10,"HIGH":8,"MEDIUM":5,"LOW":2}.get(level,4)
+ return min(10,base+(1 if any(x in issue for x in ("brake","refrigeration","fire")) else 0))
 def write(path,rec):
  path.parent.mkdir(exist_ok=True)
  with path.open("a",encoding="utf8") as f:f.write(json.dumps(rec,separators=(",",":"))+"\n")
@@ -44,8 +49,8 @@ def write(path,rec):
 class MeridianOps:
  def __init__(self,root=ROOT):
   self.root=Path(root)
-  # Use /tmp for durable state to avoid sandbox FS quirks on artifacts
-  state = Path("/tmp/meridian_ops_state"); state.mkdir(exist_ok=True)
+  # Keep durable state alongside the deployed application and its documented outboxes.
+  state = self.root; state.mkdir(exist_ok=True)
   self.out=state/"outputs";self.audit_dir=state/"audit";self.out.mkdir(exist_ok=True);self.audit_dir.mkdir(exist_ok=True)
   self.db=sqlite3.connect(str(state/"meridian_state.db"),check_same_thread=False);self.db.row_factory=sqlite3.Row
   self.db.executescript("""CREATE TABLE IF NOT EXISTS tickets(ticket_id TEXT PRIMARY KEY,status TEXT,decision_json TEXT,processed_at TEXT);CREATE TABLE IF NOT EXISTS actions(action_id TEXT PRIMARY KEY,ticket_id TEXT,action_type TEXT,payload_json TEXT,created_at TEXT,UNIQUE(ticket_id,action_type));CREATE TABLE IF NOT EXISTS runs(run_id INTEGER PRIMARY KEY AUTOINCREMENT,input_name TEXT,input_count INTEGER,new_actions INTEGER,quarantined INTEGER,duplicates INTEGER,adapted INTEGER DEFAULT 0,created_at TEXT);""")
@@ -108,9 +113,12 @@ class MeridianOps:
   try:self.db.execute("insert into actions values(?,?,?,?,?)",(f"{kind.upper()}-{tid}",tid,kind,json.dumps(payload,separators=(",",":")),now()));self.db.commit();return True
   except sqlite3.IntegrityError:return False
  def run(self,input_file="tickets.json"):
-  src=Path(input_file);src=src if src.is_absolute() else self.root/src;name=clean(src.name);new=bad=dups=adapted=0
+  src=Path(input_file);src=src if src.is_absolute() else self.root/src;name=clean(src.name);new=bad=dups=adapted=0;schema="ARRAY"
   try:
-   content=json.loads(src.read_text(encoding="utf8"));raw=content if isinstance(content,list) else next((content[x] for x in ("tickets","records","data","items") if isinstance(content.get(x),list)),None)
+   if src.suffix.lower()==".csv":
+    raw=list(csv.DictReader(src.open(encoding="utf-8-sig",newline="")));schema="CSV"
+   else:
+    content=json.loads(src.read_text(encoding="utf8"));raw=content if isinstance(content,list) else next((content[x] for x in ("tickets","records","data","items") if isinstance(content.get(x),list)),None)
    if raw is None:raise ValueError("incompatible schema")
   except Exception as e:
    tid="TKT-FILE-"+hashlib.sha256(name.encode()).hexdigest()[:10].upper();q={"ticket_id":tid,"status":"QUARANTINED","severity":"HIGH","reason":"incompatible input file","validation_failures":["schema/read failure"],"source":name}
@@ -131,7 +139,7 @@ class MeridianOps:
    for c in d["candidates"]:
     if c["status"]=="REJECTED":self.audit(tid,"VEHICLE_REJECTED","REJECTED",c["citations"],c["reasons"][0].split(":")[0],{"vehicle":c["vehicle"],"reason_count":len(c["reasons"])})
    if d["night"]:self.audit(tid,"RULE_EVALUATED","ROSTER_REVIEW",[d["driver_citation"],"dispatcher_interview.txt:drivers"],"R11",{"reason":"new driver on night incident; pairing required"})
-   d["ticket"]={k:t.get(k) for k in ("ticket_id","created_at","origin_hub","destination","issue","severity","client","vehicle_canonical")};self.db.execute("insert into tickets values(?,?,?,?)",(tid,d["status"],json.dumps(d,separators=(",",":")),now()));self.db.commit()
+   d["ticket"]={k:t.get(k) for k in ("ticket_id","created_at","origin_hub","destination","issue","severity","client","vehicle_canonical","driver_id")};d["ticket"]["severity_score"]=severity_score(t);d["context"]={"driver":self.drivers.get(t.get("driver_id")),"trips":self.trips.get(t["vehicle_canonical"],[])[-3:],"maintenance":self.mstate(t["vehicle_canonical"],date(t["created_at"]))};self.db.execute("insert into tickets values(?,?,?,?)",(tid,d["status"],json.dumps(d,separators=(",",":")),now()));self.db.commit()
    if not d["selection"]:self.audit(tid,"RULE_EVALUATED","NEEDS_REVIEW",d["citations"],"R8",{"reason":d["review"]});continue
    sel=d["selection"];reserved.add(sel["vehicle"]);wo={"work_order_id":f"WO-{tid}","ticket_id":tid,"vehicle_reg":sel["vehicle"],"created_at":now(),"status":"CREATED","decision_ref":f"DEC-{tid}","citations":d["citations"]+sel["citations"]}
    if self.action(tid,"work_order",wo):write(self.out/"work_orders.jsonl",wo);new+=1
@@ -139,7 +147,7 @@ class MeridianOps:
    draft={"message_id":f"MSG-{tid}","ticket_id":tid,"recipient":"client-operations@meridian.example","status":"PENDING_APPROVAL","body":f"Meridian Ops has prepared a replacement for incident {tid}. The operational plan awaits human approval before customer-facing confirmation.{note}","citations":d["citations"]+["dispatcher_interview.txt"]}
    if self.action(tid,"comm_draft",draft):write(self.out/"comms_pending.jsonl",draft);new+=1
    self.audit(tid,"VEHICLE_SELECTED","SELECTED",wo["citations"],"R8",{"vehicle":sel["vehicle"],"decision":f"DEC-{tid}"});self.audit(tid,"WORK_ORDER_CREATED","CREATED",wo["citations"]);self.audit(tid,"APPROVAL_REQUESTED","PENDING",draft["citations"])
-  self.db.execute("insert into runs(input_name,input_count,new_actions,quarantined,duplicates,adapted,created_at) values(?,?,?,?,?,?,?)",(name,len(raw),new,bad,dups,adapted,now()));self.db.commit();return {"input_records":len(raw),"new_actions":new,"quarantined":bad,"duplicates":dups,"adapted_fields":adapted,"schema":"ARRAY","source":name}
+  self.db.execute("insert into runs(input_name,input_count,new_actions,quarantined,duplicates,adapted,created_at) values(?,?,?,?,?,?,?)",(name,len(raw),new,bad,dups,adapted,now()));self.db.commit();return {"input_records":len(raw),"new_actions":new,"quarantined":bad,"duplicates":dups,"adapted_fields":adapted,"schema":schema,"source":name}
  def approve(self,tid,approved_by="OPS-APPROVER"):
   tid=ticket_id(tid);r=self.db.execute("select status from tickets where ticket_id=?",(tid,)).fetchone()
   if not r:return {"ok":False,"reason":"Unknown ticket"}
@@ -157,13 +165,35 @@ class MeridianOps:
   return {"findings":len(found),"files":found}
  def dashboard(self):
   c={x["status"]:x["n"] for x in self.db.execute("select status,count(*) n from tickets group by status")};last=self.db.execute("select * from runs order by run_id desc limit 1").fetchone();activity=[dict(x) for x in self.db.execute("select ticket_id,status,processed_at from tickets order by processed_at desc limit 8")]
-  return {"breakdowns":sum(c.values()),"processed":c.get("AWAITING_APPROVAL",0)+c.get("SENT",0),"needs_review":c.get("NEEDS_REVIEW",0),"quarantined":sum(1 for _ in self.db.execute("select 1 from actions where action_type='quarantine'")),"duplicates":last["duplicates"] if last else 0,"pii_exposures":self.pii_scan()["findings"],"system":"OPERATIONAL","latest_run":dict(last) if last else None,"activity":activity}
+  action_counts={r["action_type"]:r["n"] for r in self.db.execute("select action_type,count(*) n from actions group by action_type")}
+  return {"input":last["input_count"] if last else 0,"valid":max(0,(last["input_count"]-last["quarantined"])) if last else 0,"breakdowns":sum(c.values()),"processed":c.get("AWAITING_APPROVAL",0)+c.get("SENT",0),"needs_review":c.get("NEEDS_REVIEW",0),"quarantined":action_counts.get("quarantine",0),"duplicates":last["duplicates"] if last else 0,"work_orders":action_counts.get("work_order",0),"pending_approval":c.get("AWAITING_APPROVAL",0),"sent":c.get("SENT",0),"pii_exposures":self.pii_scan()["findings"],"system":"OPERATIONAL","latest_run":dict(last) if last else None,"activity":activity}
  def get_ticket(self,tid):
   r=self.db.execute("select * from tickets where ticket_id=?",(ticket_id(tid),)).fetchone()
   if not r:return None
   d=dict(r);d["decision"]=json.loads(d.pop("decision_json"));return d
  def list_tickets(self):
-  return [{"ticket_id":r["ticket_id"],"status":r["status"],"client":json.loads(r["decision_json"])["ticket"]["client"],"destination":json.loads(r["decision_json"])["ticket"]["destination"]} for r in self.db.execute("select * from tickets order by processed_at desc")]
+  rows=[]
+  for r in self.db.execute("select * from tickets order by processed_at desc"):
+   ticket=json.loads(r["decision_json"])["ticket"];rows.append({"ticket_id":r["ticket_id"],"status":r["status"],"client":ticket["client"],"destination":ticket["destination"],"severity_score":ticket.get("severity_score",severity_score(ticket))})
+  return rows
+ def ticket_actions(self,tid):
+  return {r["action_type"]:json.loads(r["payload_json"]) for r in self.db.execute("select action_type,payload_json from actions where ticket_id=?",(ticket_id(tid),))}
+ def groq_recommendation(self,tid):
+  ticket=self.get_ticket(tid)
+  if not ticket:return {"provider":"local","answer":"Ticket not found."}
+  d=ticket["decision"]; context={"ticket":d["ticket"],"context":d.get("context",{}),"rules":d["rules"],"candidates":d["candidates"],"selection":d["selection"],"review":d["review"]}
+  fallback=(f"Deterministic recommendation: {d['selection']['display_vehicle'] if d['selection'] else 'no truck may be deployed'}. "
+            + ("Human approval is required before dispatch." if d["selection"] else d["review"]))
+  key=os.getenv("GROQ_API_KEY")
+  if not key:return {"provider":"local deterministic fallback","answer":fallback,"context":context}
+  prompt="Explain the supplied dispatch evidence concisely. Do not select or authorize a truck; the deterministic selection is binding. Cite rule IDs and evidence only.\n"+json.dumps(context,separators=(",",":"))
+  try:
+   body=json.dumps({"model":os.getenv("GROQ_MODEL","llama-3.1-8b-instant"),"messages":[{"role":"system","content":"You are a logistics evidence explainer. Never expose personal data or override rules."},{"role":"user","content":prompt}],"temperature":0.1,"max_tokens":250}).encode()
+   req=request.Request("https://api.groq.com/openai/v1/chat/completions",data=body,headers={"Authorization":f"Bearer {key}","Content-Type":"application/json"})
+   answer=json.loads(request.urlopen(req,timeout=12).read())["choices"][0]["message"]["content"]
+   return {"provider":"Groq","answer":clean(answer),"context":context}
+  except Exception:
+   return {"provider":"local deterministic fallback (Groq unavailable)","answer":fallback,"context":context}
  def context_answer(self,q):
   m=re.search(r"TKT-[A-Z0-9_-]+",q.upper())
   if m and (r:=self.get_ticket(m.group())):
