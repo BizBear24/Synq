@@ -1,0 +1,21 @@
+# Generated runtime state and evaluator-visible artifacts
+__pycache__/
+*.py[cod]
+meridian_state.db
+outputs/
+audit/
+server-*.log
+overview.html
+
+# Supplied client context contains personal data; provision it locally or via a private secure store.
+tickets.json
+fleet_master.csv
+drivers_roster.csv
+maintenance_log.xlsx
+meridian_trips.csv
+dispatcher_interview.txt
+emails/
+Synq_AI_Forward_Deployment_Challenge.pdf
+Synq_AI_FDE_Challenge_Deck.pptx
+CANDIDATE_README.md
+inspect_sources.py
